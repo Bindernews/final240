@@ -1,8 +1,9 @@
 
 import pprint
+import re
 
 import lark
-from lark.common import ParseError
+from lark.common import ParseError, UnexpectedToken
 
 sop_parser = lark.Lark(r'''
     out : ";"
@@ -20,10 +21,14 @@ sop_parser = lark.Lark(r'''
     %ignore WS
     ''', start='main', parser='lalr')
 
+# Matches any illegal character
+INV_TOKEN_REGEX = re.compile(r"[^\sa-zA-Z()+;':]")
+
 ORD_CUT = ord('a')
 
-# We declare this here so that clients can import sopvm.ParseError
+# We declare this here so that clients can import sopvm.<whatever>
 ParseError = ParseError
+UnexpectedToken = UnexpectedToken
 
 def flatten(lis):
     out = []
@@ -40,17 +45,26 @@ class TransGetVariables(lark.Transformer):
     """
     def __init__(self):
         super().__init__()
-        self.variables = set()
+        self._variables = set()
+        self._prefix = None
 
     def variable(self, name_):
         name, = name_
-        self.variables.add(name)
+        self._variables.add(name)
+
+    def prefix(self, variables):
+        self._prefix = ''.join([x[0] for x in variables])
+        return self._prefix
 
     def main(self, tree_):
-        # Return a list of variables sorted according to a logical sorting order
-        lis = list(self.variables)
-        lis.sort(key=lambda x: ord(x) - ORD_CUT if ord(x) >= ORD_CUT else ord(x))
-        return lis
+        if self._prefix:
+            # Return the user-defined prefix
+            return self._prefix
+        else:
+            # Return a list of variables sorted according to a logical sorting order
+            lis = list(self._variables)
+            lis.sort(key=lambda x: ord(x) - ORD_CUT if ord(x) >= ORD_CUT else ord(x))
+            return ''.join(lis)
 
 class TransCompile(lark.Transformer):
     def __init__(self, inputs=None):
@@ -131,24 +145,21 @@ def _compile(text, inputs=None):
     :param text: Text to compile, if no prefix is supplied, inputs must be supplied
     :param inputs: replacement for "prefix" if prefix is not part of "text"
     """
-    try:
-        # The text MUST contain a :
-        if ':' not in text:
-            text = ':' + text
-        tree = sop_parser.parse(text)
-        opcodes = TransCompile(inputs).transform(tree)
-        # We've got an array of opcodes, we just need to fill in OP_OR jumps
-        jumplist = {}
-        for i in range(len(opcodes) - 1, 0, -1):
-            op = opcodes[i]
-            if isinstance(op, OpPop):
-                jumplist[op.opid] = i
-            elif isinstance(op, OpOr):
-                # Fill in the jump value from the jumplist
-                op.param = jumplist[op.param] - i
-        return opcodes
-    except lark.common.ParseError as e:
-        raise e
+    # The text MUST contain a :
+    if ':' not in text:
+        text = ':' + text
+    tree = sop_parser.parse(text)
+    opcodes = TransCompile(inputs).transform(tree)
+    # We've got an array of opcodes, we just need to fill in OP_OR jumps
+    jumplist = {}
+    for i in range(len(opcodes) - 1, 0, -1):
+        op = opcodes[i]
+        if isinstance(op, OpPop):
+            jumplist[op.opid] = i
+        elif isinstance(op, OpOr):
+            # Fill in the jump value from the jumplist
+            op.param = jumplist[op.param] - i
+    return opcodes
 
 def _test_compile():
     """ Tests for _compile() """
@@ -233,8 +244,9 @@ class EvalContext:
         self.pos = 0
 
 class SOPCode:
-    def __init__(self, opcodes):
+    def __init__(self, opcodes, text=""):
         self._code = opcodes
+        self.text = text
 
     def eval(self, inputs):
         ctx = EvalContext(inputs)
@@ -245,11 +257,23 @@ class SOPCode:
             ctx.pos += 1
         return ctx.output
 
-def parse(text):
-    opcodes = _compile(text)
-    return SOPCode(opcodes)
+def token_check(text):
+    bad_match = INV_TOKEN_REGEX.search(text)
+    if bad_match:
+        raise ParseError('Invalid token \'%s\' at index %i' % (bad_match[0], bad_match.start(0)))
+
+def parse(text, inputs=None):
+    """
+    Compile the given text, returns a SOPCode or raises a ParseError
+    :param text: Text to compile, if no prefix is supplied, inputs must be supplied
+    :param inputs: replacement for "prefix" if prefix is not part of "text"
+    """
+    token_check(text)
+    opcodes = _compile(text, inputs)
+    return SOPCode(opcodes, text)
 
 def get_variables(text):
+    token_check(text)
     try:
         # We don't need a real prefix, but it does need to exist
         if ":" not in text:

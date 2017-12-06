@@ -1,3 +1,4 @@
+
 import sys
 
 import sopvm
@@ -33,18 +34,14 @@ class ReplInterface:
         """text \t\t Allows you to enter your Boolean Equation by typing it here in the console"""
         comm = input("Please input your Boolean Equation, using only letters of the English alphabet as variables: \n")
         # input("Please input your Boolean Equation in the form \"[variables]:[equation]\" (e.g., \"xyx:x+(y'z)\"")
-        vars = []
-
-        for char in comm:
-            if char.isalpha():
-                if char not in vars:
-                    vars.append(char)
-            elif char not in " ()+-'":
-                print("Unrecognized character: "+char)
-                print("Only use standard Boolean operators, English letters, and parentheses.")
-                return
-        self.variables = vars
-        self.equation = comm
+        try:
+            varids = sopvm.get_variables(comm)
+            self.equation = sopvm.parse(comm, varids)
+        except sopvm.UnexpectedToken as e:
+            token = e.token
+            print('Error: Unexpected token %s at line %i, column %i' % (token, token.line, token.column))
+        except sopvm.ParseError as e:
+            print(e)
 
     # TODO this
     def cmd_image(self):
@@ -70,7 +67,7 @@ class ReplInterface:
             row = comm.split()
 
             # TODO Get val from analyzer, using row
-            val = 1
+            val = self.equation.eval(row)
 
             print("Solution: " + str(val))
         else:
