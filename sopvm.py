@@ -2,6 +2,7 @@
 import pprint
 
 import lark
+from lark.common import ParseError
 
 sop_parser = lark.Lark(r'''
     out : ";"
@@ -9,18 +10,20 @@ sop_parser = lark.Lark(r'''
     ?variable_id : /[a-zA-Z]/
     variable : variable_id
     prefix : variable_id+
-    ?expression : variable+
-                | nested
+    ?expression : variable
+                | "(" equation ")"
                 | expression "'"  -> invert
-    ?nested : "(" equation ")"
     ?equation : expression+ (orr expression+)*
-    main : prefix ":" equation (out equation)*
+    main : prefix? ":" equation (out equation)*
 
     %import common.WS
     %ignore WS
     ''', start='main', parser='lalr')
 
 ORD_CUT = ord('a')
+
+# We declare this here so that clients can import sopvm.ParseError
+ParseError = ParseError
 
 def flatten(lis):
     out = []
@@ -44,19 +47,36 @@ class TransGetVariables(lark.Transformer):
         self.variables.add(name)
 
     def main(self, tree_):
+        # Return a list of variables sorted according to a logical sorting order
         lis = list(self.variables)
         lis.sort(key=lambda x: ord(x) - ORD_CUT if ord(x) >= ORD_CUT else ord(x))
         return lis
 
 class TransCompile(lark.Transformer):
-    def __init__(self):
+    def __init__(self, inputs=None):
+        """
+        Initialize a 
+        :param inputs: user-supplied prefix string (optional)
+        """
         super().__init__()
         self.inputs = {}
         self._opid = 0
+        self._has_prefix = False
+
+        if inputs:
+            self._process_prefix(inputs)
 
     def _next_opid(self):
         self._opid += 1
         return self._opid
+
+    def _process_prefix(self, variables):
+        """ Process a string of variables into the inputs variables """
+        count = 0
+        for varid in variables:
+            self.inputs[varid] = count
+            count += 1
+        return self.inputs
         
     def orr(self, _):
         return OpOr(0)
@@ -93,27 +113,30 @@ class TransCompile(lark.Transformer):
         return OpAnd(name[0], self.inputs)
     
     def prefix(self, variables):
-        count = 0
-        for varid in variables:
-            self.inputs[varid[0]] = count
-            count += 1
-        return self.inputs
+        # Collect a series of tokens into a string
+        varids = [x[0] for x in variables]
+        self._has_prefix = True
+        return self._process_prefix(varids)
 
     def main(self, tree):
         """ Converts the nested lists to a single list. """
-        #return [self.inputs, [str(x) for x in flatten(tree[1:])]]
-        return flatten(tree[1:] + [OpOut(0)])
+        # Remove the prefix if it wasn't implied
+        if self._has_prefix:
+            tree = tree[1:]
+        return flatten(tree + [OpOut(0)])
 
-class ParseError(BaseException):
-    pass
-
-def _compile(text):
+def _compile(text, inputs=None):
     """
-    Compile the given text.
-    Returns an array of opcodes or raises a ParseError.
+    Compile the given text, returns an array of opcodes or raises a ParseError.
+    :param text: Text to compile, if no prefix is supplied, inputs must be supplied
+    :param inputs: replacement for "prefix" if prefix is not part of "text"
     """
     try:
-        opcodes = TransCompile().transform(sop_parser.parse(text))
+        # The text MUST contain a :
+        if ':' not in text:
+            text = ':' + text
+        tree = sop_parser.parse(text)
+        opcodes = TransCompile(inputs).transform(tree)
         # We've got an array of opcodes, we just need to fill in OP_OR jumps
         jumplist = {}
         for i in range(len(opcodes) - 1, 0, -1):
@@ -125,7 +148,7 @@ def _compile(text):
                 op.param = jumplist[op.param] - i
         return opcodes
     except lark.common.ParseError as e:
-        raise ParseError(e)
+        raise e
 
 def _test_compile():
     """ Tests for _compile() """
@@ -134,13 +157,17 @@ def _test_compile():
         "abc:ab+(c)'+c'",
         "ab:a+((b))'",
         "ab:a(a+b)",
-        'ab:ab',
+        "ab:ab",
         "ab:ab;a+b;a'b",
+        ("ab'+a'b", "ab"),
     ]
     for expr in TESTS:
         print('Parsing ', expr)
         try:
-            opcodes = _compile(expr)
+            if isinstance(expr, str):
+                opcodes = _compile(expr)
+            else:
+                opcodes = _compile(expr[0], expr[1])
             pprint.pprint([str(x) for x in opcodes], width=20)
         except ParseError as e:
             print(e)
@@ -224,9 +251,12 @@ def parse(text):
 
 def get_variables(text):
     try:
+        # We don't need a real prefix, but it does need to exist
+        if ":" not in text:
+            text = ':' + text
         return TransGetVariables().transform(sop_parser.parse(text))
     except lark.common.ParseError as e:
-        raise ParseError(e)
+        raise e
 
-
-_test_compile()
+if __name__ == '__main__':
+    _test_compile()
