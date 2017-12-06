@@ -1,9 +1,11 @@
 
 import sys
+import multiprocessing as mp
 
 import sopvm
-# import sopocr
-# import blueobex
+
+def valtoarray(val):
+    return [str(int(x)) for x in val]
 
 class ReplInterface:
 
@@ -12,16 +14,51 @@ class ReplInterface:
         self.variables = []
         self.loop = True
 
+        self.obex = None
+        self.ocrhelper = None
+        self.bt_queue = None
+
+    def start_ocr(self):
+        import sopocr
+        import blueobex
+
+        self.bt_queue = mp.Queue()
+        self.ocrhelper = sopocr.OCRHelper()
+        self.obex = blueobex.BlueObex(
+            lambda path: self._obex_callback(path))
+
+        print('Starting Bluetooth')
+        self.obex.start()
+        print('Bluetooth running')
+
+    def _obex_callback(self, path):
+        self.bt_queue.put_nowait(path)
+
+    def _process_text(self, text):
+        try:
+            varids = sopvm.get_variables(text)
+            self.equation = sopvm.parse(text, varids)
+        except sopvm.UnexpectedToken as e:
+            token = e.token
+            print('Error: Unexpected token %s at line %i, column %i' % (token, token.line, token.column))
+        except sopvm.ParseError as e:
+            print(e)
+
     def run(self):
         print("Welcome to the Boolean Equation Analyzer! To see all available commands, type \"help\".")
-        while self.loop:
-            comm = input("> ")
-            command = getattr(self, 'cmd_'+comm.lower(), None)
-            if command is not None:
-                command()
-            else:
-                print("Sorry, that command was not found. Try typing \"help\" for a list of commands.")
-
+        try:
+            while self.loop:
+                comm = input("> ")
+                command = getattr(self, 'cmd_'+comm.lower(), None)
+                if command is not None:
+                    command()
+                else:
+                    print("Sorry, that command was not found. Try typing \"help\" for a list of commands.")
+        finally:
+            if self.obex:
+                self.obex.stop()
+                self.ocrhelper.close()
+            
     def cmd_help(self):
         """help \t\t Prints out this lovely set of commands"""
 
@@ -36,21 +73,16 @@ class ReplInterface:
         """text \t\t Allows you to enter your Boolean Equation by typing it here in the console"""
         comm = input("Please input your Boolean Equation, using only letters of the English alphabet as variables: \n")
         # input("Please input your Boolean Equation in the form \"[variables]:[equation]\" (e.g., \"xyx:x+(y'z)\"")
-        try:
-            varids = sopvm.get_variables(comm)
-            self.equation = sopvm.parse(comm, varids)
-        except sopvm.UnexpectedToken as e:
-            token = e.token
-            print('Error: Unexpected token %s at line %i, column %i' % (token, token.line, token.column))
-        except sopvm.ParseError as e:
-            print(e)
+        self._process_text(comm)
 
-    # TODO this
     def cmd_image(self):
         """image \t\t Allows you to enter your Boolean Equation by transmitting an image of it to the device"""
-        print("Drew, how do interface with image thing?? How do??")
-        self.equation = None
-        self.variables = []
+        print("Send the image via Bluetooth.")
+        path = self.bt_queue.get()
+        print("Received Bluetooth file.")
+        text = self.ocrhelper.process(path)
+        print("Processed image as \"%s\"." % text)
+        self._process_text(text)
 
     def cmd_solve(self):
         """solve \t\t Solves the Boolean Equation using given input values"""
@@ -59,19 +91,16 @@ class ReplInterface:
 
             row = [0 for i in range(len(self.variables))]
 
-            print("Finding solution for equation "+self.equation)
+            print("Finding solution for equation "+str(self.equation))
             print("Please enter values of either 0 or 1 for each variable in your equation, separated by spaces.")
-            for i in self.variables:
+            for i in self.equation.inputs:
                 print(i, end=" ")
             print()
             comm = input()
-
-            row = comm.split()
-
-            # TODO Get val from analyzer, using row
-            val = self.equation.eval(row)
-
-            print("Solution: " + str(val))
+            # Convert list of 1s and 0s to array of bools
+            inputs = [bool(int(x)) for x in comm.split()]
+            val = self.equation.eval(inputs)
+            print("Solution: " + " ".join(valtoarray(val)))
         else:
             print("You must enter an equation with either \"text\" or \"image\" first. ")
 
@@ -79,21 +108,19 @@ class ReplInterface:
         """table \t\t Displays a truth table of the most recently entered Boolean Equation"""
         if self.equation is not None:
 
-            row = [0 for i in range(len(self.variables))]
+            varids = self.equation.inputs
+            row = [0 for i in range(len(varids))]
 
-            for i in self.variables:
-                print(i, end="\t")
-            print(self.equation)
+            for i in varids:
+                print(i, end="  ")
+            print(str(self.equation))
 
-            for i in range(2**len(self.variables)):
-
-                for j in range(len(self.variables)):
+            for i in range(2**len(varids)):
+                for j in range(len(varids)):
                     row[j] = int((i/(2**j))) % 2
-                    print(row[j], end="\t")
-
-                # TODO Get val from analyzer, using row
-                val = 1
-                print(val)
+                val = self.equation.eval(row)
+                fullrow = [str(x) for x in row] + valtoarray(val)
+                print("  ".join(fullrow))
             print()
         else:
             print("You must enter an equation with either \"text\" or \"image\" first. ")
@@ -105,6 +132,7 @@ class ReplInterface:
 
 if __name__ == '__main__':
     test = ReplInterface()
+    test.start_ocr()
     test.run()
 
 

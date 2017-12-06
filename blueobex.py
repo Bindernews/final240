@@ -3,6 +3,7 @@ import logging
 import os
 import os.path
 from subprocess import Popen
+import multiprocessing as mp
 import tempfile
 import time
 
@@ -12,17 +13,17 @@ import pyinotify
 _LOGGER = logging.getLogger(__name__)
 
 # System commands
-BLUETOOTH_CMD = ['bluetoothd', '--compat']
-OBEXPUSHD_CMD = ['obexpushd', '-B', '-n']
+#OBEXPUSHD_CMD = ['obexpushd', '-B', '-n']
+OBEXPUSHD_CMD = ['obexpushd', '-B3' '-I']
 
 class InotifyHandler(pyinotify.ProcessEvent):
     def my_init(self, callback):
         self.callback = callback
         
     def process_IN_CLOSE_WRITE(self, event):
+        #print('Received CLOSE_WRITE')
         if not event.dir:
-            dirname, filename = os.path.split(event.pathname)
-            self.callback(dirname, filename)
+            self.callback(event.pathname)
 
 class BlueObex:
     """
@@ -49,8 +50,8 @@ class BlueObex:
         # Temp directory
         self.directory = None
         # Services
-        self.proc_blue = None
         self.proc_obex = None
+        self.proc_notify = None
 
     def start(self, async=True):
         """
@@ -64,31 +65,30 @@ class BlueObex:
         self.started = True
 
         # Create the temp directory
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(dir='.')
         _LOGGER.info('Starting in ' + self.directory.name)
         
         try:
-            # Start bluetooth
-            self.proc_blue = Popen(BLUETOOTH_CMD)
-            # Wait for it to be ready
-            time.sleep(1)
             # Now start OBEX listener
             self.proc_obex = Popen(OBEXPUSHD_CMD, cwd=self.directory.name)
             # Wait to see if it started successfully
             time.sleep(2)
             if self.proc_obex.poll():
                 # If we got a non-None value, an error occured
-                raise Exception('obexpushd failed')
+                raise Exception('obexpushd failed to start')
             # Create the watch manager
             self.watch_manager = pyinotify.WatchManager()
             self.watch_manager.add_watch(self.directory.name,
                     pyinotify.IN_CLOSE_WRITE)
             # Let the system know we've started successfully
             self.running = True
-                
             self.notifier = pyinotify.Notifier(self.watch_manager,
                     InotifyHandler(callback=self.callback))
-            self.notifier.loop(daemonize=async)
+            if async:
+                self.proc_notify = mp.Process(target=lambda: self.notifier.loop())
+                self.proc_notify.start()
+            else:
+                self.notifier.loop(daemonize=False)
             return True
         except KeyboardInterrupt:
             self.running = True
@@ -105,13 +105,13 @@ class BlueObex:
         if not self.running:
             return True
         self.running = False
-        # Brutally murder the subprocess and stop stalking the directory
-        if self.proc_blue:
-            self.proc_blue.terminate()
-        if self.proc_obex:
-            self.proc_obex.terminate()
+        # Kill subprocess and stop stalking the directory
         if self.notifier:
             self.notifier.stop()
+        if self.proc_obex:
+            self.proc_obex.terminate()
+        if self.proc_notify:
+            self.proc_notify.terminate()
         if self.watch_manager:
             self.watch_manager.close()
         self.directory.cleanup()

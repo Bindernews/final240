@@ -244,9 +244,10 @@ class EvalContext:
         self.pos = 0
 
 class SOPCode:
-    def __init__(self, opcodes, text=""):
+    def __init__(self, opcodes, inputs, text=""):
         self._code = opcodes
         self.text = text
+        self.inputs = inputs
 
     def eval(self, inputs):
         ctx = EvalContext(inputs)
@@ -256,6 +257,9 @@ class SOPCode:
             code[ctx.pos].eval(ctx)
             ctx.pos += 1
         return ctx.output
+
+    def __str__(self):
+        return self.text
 
 def token_check(text):
     bad_match = INV_TOKEN_REGEX.search(text)
@@ -270,7 +274,8 @@ def parse(text, inputs=None):
     """
     token_check(text)
     opcodes = _compile(text, inputs)
-    return SOPCode(opcodes, text)
+    inputs = get_variables(text)
+    return SOPCode(opcodes, inputs, text)
 
 def get_variables(text):
     token_check(text)
