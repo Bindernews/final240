@@ -2,6 +2,8 @@
 import sys
 
 import sopvm
+# import sopocr
+# import blueobex
 
 class ReplInterface:
 
