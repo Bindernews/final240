@@ -19,16 +19,12 @@ SOP_REGEX = re.compile(r"[\sa-zA-Z:();'+]+")
 OCR_TOOL = pyocr.get_available_tools()[0]
 OCR_LANG = 'eng' # equ, osd, eng
 
-def _worker_init():
-    """ Initializer for worker threads so KeyboardInterrupt doesn't throw tons of errors. """
-    #signal.signal(signal.SIGINT, signal.SIG_IGN)
-    pass
-
 class OCRHelper:
     def __init__(self):
         pass
         
     def process(self, path):
+        """ Perform OCR on the file at path. Returns the resulting text. """
         ext = os.path.splitext(path)[1]
 
         print("Processing file " + path)
