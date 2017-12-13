@@ -1,6 +1,5 @@
 #!/bin/bash
-# Fixes weird bugs with bluetooth on the raspberry pi.
-# Must run as root.
+# Fixes weird bugs with bluetooth on the Raspberry Pi. Must run as root.
 
 function getpids {
   echo $(ps aux | grep "$1" | head -n-1 | awk '{print $2}')

@@ -130,7 +130,7 @@ class ReplInterface:
 
 if __name__ == '__main__':
     test = ReplInterface()
-    #test.start_ocr()
+    test.start_ocr()
     test.run()
 
 
