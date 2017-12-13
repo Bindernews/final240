@@ -14,11 +14,12 @@ class ReplInterface:
         self.variables = []
         self.loop = True
 
-        self.obex = None
-        self.ocrhelper = None
-        self.bt_queue = None
+        self.obex = None        # BlueObex reference
+        self.ocrhelper = None   # OCRHelper
+        self.bt_queue = None    # Process-safe queue for transferring data from worker process to main process
 
     def start_ocr(self):
+        """ Start OCR and Bluetooth. This is optional. """
         import sopocr
         import blueobex
 
@@ -31,9 +32,13 @@ class ReplInterface:
         print('Bluetooth running')
 
     def _obex_callback(self, path):
+        """ Callback for when we recieve a file over Bluetooth. """
         self.bt_queue.put_nowait(path)
 
     def _process_text(self, text):
+        """
+        Update self.equation by parsing text. Handles errors correctly.
+        """
         try:
             varids = sopvm.get_variables(text)
             self.equation = sopvm.parse(text, varids)
