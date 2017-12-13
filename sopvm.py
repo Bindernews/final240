@@ -67,6 +67,7 @@ class TransGetVariables(lark.Transformer):
             return ''.join(lis)
 
 class TransCompile(lark.Transformer):
+    """ Transformer that generates a list of Opcode objects from a lark.Tree """
     def __init__(self, inputs=None):
         """
         Initialize a 
@@ -81,6 +82,10 @@ class TransCompile(lark.Transformer):
             self._process_prefix(inputs)
 
     def _next_opid(self):
+        """
+        Generate a unique Opcode ID for this program.
+        Used when we need unique Opcode IDs, mostly for specifying where an OP_OR is going to jump to.
+        """
         self._opid += 1
         return self._opid
 
@@ -93,12 +98,15 @@ class TransCompile(lark.Transformer):
         return self.inputs
         
     def orr(self, _):
+        """ OP_OR """
         return OpOr(0)
 
     def out(self, _):
+        """ OP_OUT """
         return OpOut(0)
 
     def expression(self, children):
+        """ Transform an expression """
         return children
 
     def equation(self, children):
@@ -114,6 +122,7 @@ class TransCompile(lark.Transformer):
         return [OpPush(0)] + children + [oppop]
     
     def invert(self, sub_):
+        """ NOT the previous expression. """
         sub = sub_[0]
         if isinstance(sub, OpAnd):
             # If it's a simple expression it's a simple NAND
@@ -124,9 +133,11 @@ class TransCompile(lark.Transformer):
             return sub
         
     def variable(self, name):
+        """ Convert a variable to an Opcode """
         return OpAnd(name[0], self.inputs)
     
     def prefix(self, variables):
+        """ Handle the prefix if present. """
         # Collect a series of tokens into a string
         varids = [x[0] for x in variables]
         self._has_prefix = True
@@ -184,11 +195,18 @@ def _test_compile():
             print(e)
 
 
+#########################################################################################
+# These Op* classes basically implement the VM. The interpreter calls the eval() method
+# for each Opcode in the list, and that's how it all works.
+#########################################################################################
+
 class Opcode:
+    """ Base Opcode class. """
     def __init__(self, param):
         self.param = param
 
 class OpAnd(Opcode):
+    """ AND the current value with the param. """
     def __init__(self, param, inputs):
         self.param = param
         self.var = inputs[param]
@@ -198,29 +216,35 @@ class OpAnd(Opcode):
         return 'AND ' + self.param
         
 class OpNand(OpAnd):
+    """ NAND the current value with the param. """
     def eval(self, ctx):
         ctx.v &= not ctx.input[self.var]
     def __str__(self):
         return 'NAND ' + self.param
         
 class OpPop(Opcode):
+    """ POP a value from the stack and AND (if !param) or NAND (if param) with the current value. """
     def __init__(self, opid):
         self.opid = opid
         self.param = False
     def eval(self, ctx):
+        # ctx.v XOR self.param = NAND if param, AND if !param
         ctx.v = (ctx.v ^ self.param) and ctx.stack.pop()
     def __str__(self):
         return 'POP ' + ('NOT ' if self.param else '')
 
 class OpOr(Opcode):
+    """ If the current value is True, short-circuit. """
     def eval(self, ctx):
         if ctx.v:
+            # change the interpreter position
             ctx.pos += self.param - 1
         ctx.v = True
     def __str__(self):
         return 'OR ' + str(self.param)
 
 class OpOut(Opcode):
+    """ Write the current value to the next output slot. """
     def eval(self, ctx):
         ctx.output.append(ctx.v)
         ctx.v = True
@@ -228,6 +252,7 @@ class OpOut(Opcode):
         return 'OUT'
 
 class OpPush(Opcode):
+    """ Push the current value on to the stack. """
     def eval(self, ctx):
         ctx.stack.append(ctx.v)
         ctx.v = True
@@ -235,13 +260,14 @@ class OpPush(Opcode):
         return 'PUSH'
 
 class EvalContext:
+    """ Interpreter context. """
     def __init__(self, inputs):
-        self.v = True
-        self.output = []
-        self.stack = []
-        self.input = inputs
-        self.done = False
-        self.pos = 0
+        self.v = True           # Current evaluated value
+        self.output = []        # List of outputs, usually only 1
+        self.stack = []         # Stack (see PUSH and POP)
+        self.input = inputs     # list of input values (booleans)
+        self.done = False       # Is the interpreter done?
+        self.pos = 0            # Position in Opcode list
 
 class SOPCode:
     def __init__(self, opcodes, inputs, text=""):
@@ -250,6 +276,10 @@ class SOPCode:
         self.inputs = inputs
 
     def eval(self, inputs):
+        """
+        Evaluate this equation with the given inputs.
+        :param inputs: list of bools
+        """
         ctx = EvalContext(inputs)
         code = self._code
         codelen = len(code)
@@ -262,6 +292,7 @@ class SOPCode:
         return self.text
 
 def token_check(text):
+    """ Throw a parse error if an invalid token is in text. """
     bad_match = INV_TOKEN_REGEX.search(text)
     if bad_match:
         raise ParseError('Invalid token \'%s\' at index %i' % (bad_match[0], bad_match.start(0)))
@@ -270,7 +301,7 @@ def parse(text, inputs=None):
     """
     Compile the given text, returns a SOPCode or raises a ParseError
     :param text: Text to compile, if no prefix is supplied, inputs must be supplied
-    :param inputs: replacement for "prefix" if prefix is not part of "text"
+    :param inputs: replacement for "prefix" if prefix is not part of "text", may be None
     """
     token_check(text)
     opcodes = _compile(text, inputs)
@@ -278,6 +309,11 @@ def parse(text, inputs=None):
     return SOPCode(opcodes, inputs, text)
 
 def get_variables(text):
+    """
+    Returns a string of the names of the variables the equation uses in order.
+    :param text: Equation string to extract variables from.
+    :throws ParseError: if text is not a valid equation
+    """
     token_check(text)
     try:
         # We don't need a real prefix, but it does need to exist

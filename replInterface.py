@@ -24,8 +24,7 @@ class ReplInterface:
 
         self.bt_queue = mp.Queue()
         self.ocrhelper = sopocr.OCRHelper()
-        self.obex = blueobex.BlueObex(
-            lambda path: self._obex_callback(path))
+        self.obex = blueobex.BlueObex(lambda path: self._obex_callback(path))
 
         print('Starting Bluetooth')
         self.obex.start()
@@ -57,7 +56,6 @@ class ReplInterface:
         finally:
             if self.obex:
                 self.obex.stop()
-                self.ocrhelper.close()
             
     def cmd_help(self):
         """help \t\t Prints out this lovely set of commands"""
@@ -132,7 +130,7 @@ class ReplInterface:
 
 if __name__ == '__main__':
     test = ReplInterface()
-    test.start_ocr()
+    #test.start_ocr()
     test.run()
 
 

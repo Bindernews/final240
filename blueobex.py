@@ -12,9 +12,8 @@ import pyinotify
 # Logger for this module
 _LOGGER = logging.getLogger(__name__)
 
-# System commands
-#OBEXPUSHD_CMD = ['obexpushd', '-B', '-n']
-OBEXPUSHD_CMD = ['obexpushd', '-B3' '-I']
+# System command to start obexpushd
+OBEXPUSHD_CMD = ['obexpushd', '-B' '-I']
 
 class InotifyHandler(pyinotify.ProcessEvent):
     def my_init(self, callback):
@@ -113,7 +112,7 @@ class BlueObex:
         if self.proc_notify:
             self.proc_notify.terminate()
         if self.watch_manager:
-            self.watch_manager.close()
+            pass  # self.watch_manager.close()  # Apparently terminating proc_notify closes this already. 
         self.directory.cleanup()
 
 def test():
